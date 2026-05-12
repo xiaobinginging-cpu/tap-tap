@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cream: #f5ecd9;
+  --color-cream-soft: #fbf4e3;
+  --color-cedar: #6b4f3b;
+  --color-cedar-soft: #8a6e58;
+  --color-rose: #d4a89b;
+  --color-rose-soft: #e8c7bc;
+
+  --font-serif: "Noto Serif SC", "Songti SC", "Source Han Serif SC", ui-serif, Georgia, serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-serif);
+  color: var(--color-cedar);
+  background-color: var(--color-cream);
+  background-image: radial-gradient(
+    var(--color-rose-soft) 1.2px,
+    transparent 1.4px
+  );
+  background-size: 22px 22px;
+  background-position: 0 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font-family: inherit;
+}
