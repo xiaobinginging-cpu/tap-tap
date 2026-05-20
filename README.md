@@ -18,14 +18,14 @@ readout, a few buttons, a play/pause. That's it.
 - Vite + React + TypeScript
 - Tailwind CSS v4 (via `@tailwindcss/vite`)
 - `vite-plugin-pwa` for the service worker + web manifest
-- Noto Serif SC for the headings
+- System serif fonts (Songti SC / STSong) — no external font CDN
 
 ## Brand notes (so future-me doesn't drift)
 
 - Background: cream `#f5ecd9` with a soft rose dot pattern
 - Text: cedar `#6b4f3b`
 - Accent: dusty rose `#d4a89b`
-- Headers: Noto Serif SC
+- Headers: system serif (Songti SC on Apple, STSong / SimSun on Windows)
 
 ## Develop
 
