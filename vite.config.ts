@@ -9,7 +9,13 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      includeAssets: [
+        'favicon.svg',
+        'favicon.png',
+        'favicon-16.png',
+        'favicon-32.png',
+        'apple-touch-icon.png',
+      ],
       manifest: {
         name: 'tap-tap',
         short_name: 'tap-tap',
@@ -19,9 +25,9 @@ export default defineConfig({
         display: 'standalone',
         icons: [
           {
-            src: 'favicon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
+            src: 'favicon-32.png',
+            sizes: '32x32',
+            type: 'image/png',
             purpose: 'any',
           },
           {
