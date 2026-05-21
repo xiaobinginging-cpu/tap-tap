@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { getSilentAudioUrl } from './lib/silentAudio'
 
 const MIN_BPM = 40
 const MAX_BPM = 240
@@ -65,7 +66,8 @@ function App() {
   const audioCtxRef = useRef<AudioContext | null>(null)
   const schedulerRef = useRef<number | null>(null)
   const countdownRef = useRef<number | null>(null)
-  const keepAliveRef = useRef<AudioBufferSourceNode | null>(null)
+  const silenceAudioRef = useRef<HTMLAudioElement | null>(null)
+  const mediaSourceReadyRef = useRef(false)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
   const nextBeatTimeRef = useRef(0)
   const timerEndsAtRef = useRef<number | null>(null)
@@ -78,7 +80,7 @@ function App() {
   playingRef.current = playing
   timerEnabledRef.current = timerEnabled
 
-  const SCHEDULE_AHEAD_SEC = 0.15
+  const SCHEDULE_AHEAD_SEC = 0.25
   const LOOKAHEAD_MS = 25
 
   const ensureCtx = useCallback((): AudioContext => {
@@ -266,25 +268,44 @@ function App() {
     playSoundAt(ctx, ctx.currentTime)
   }, [ensureCtx, playSoundAt])
 
+  const resumeSilenceTrack = useCallback(async () => {
+    const audio = silenceAudioRef.current
+    if (!audio || !playingRef.current) return
+    try {
+      if (audio.paused) await audio.play()
+    } catch {
+      /* ignore */
+    }
+    const ctx = audioCtxRef.current
+    if (ctx?.state === 'suspended') await ctx.resume()
+  }, [])
+
   const stopKeepAlive = useCallback(() => {
-    keepAliveRef.current?.stop()
-    keepAliveRef.current = null
+    const audio = silenceAudioRef.current
+    if (!audio) return
+    audio.pause()
+    audio.currentTime = 0
   }, [])
 
   const startKeepAlive = useCallback(
-    (ctx: AudioContext) => {
-      stopKeepAlive()
-      const buffer = ctx.createBuffer(1, 2, ctx.sampleRate)
-      const src = ctx.createBufferSource()
-      src.buffer = buffer
-      src.loop = true
-      const gain = ctx.createGain()
-      gain.gain.value = 0.0001
-      src.connect(gain).connect(ctx.destination)
-      src.start()
-      keepAliveRef.current = src
+    async (ctx: AudioContext) => {
+      const audio = silenceAudioRef.current
+      if (!audio) return
+
+      audio.loop = true
+      audio.volume = 0.02
+      audio.muted = false
+
+      if (!mediaSourceReadyRef.current) {
+        const source = ctx.createMediaElementSource(audio)
+        source.connect(ctx.destination)
+        mediaSourceReadyRef.current = true
+      }
+
+      await audio.play()
+      if (ctx.state === 'suspended') await ctx.resume()
     },
-    [stopKeepAlive],
+    [],
   )
 
   const releaseWakeLock = useCallback(async () => {
@@ -368,12 +389,15 @@ function App() {
 
     const start = async () => {
       const ctx = ensureCtx()
-      await ctx.resume()
-      startKeepAlive(ctx)
+      if (silenceAudioRef.current?.paused) {
+        await startKeepAlive(ctx)
+      } else if (ctx.state === 'suspended') {
+        await ctx.resume()
+      }
       await requestWakeLock()
       setMediaSessionPlaying(true)
 
-      nextBeatTimeRef.current = ctx.currentTime + 0.05
+      nextBeatTimeRef.current = ctx.currentTime + 0.1
 
       const loop = () => {
         if (cancelled || !playingRef.current) return
@@ -423,21 +447,64 @@ function App() {
   }, [playing, timerEnabled, timerSec, syncTimerFromClock])
 
   useEffect(() => {
+    const audio = silenceAudioRef.current
+    if (!audio) return
+
+    const onSilencePaused = () => {
+      if (playingRef.current) void resumeSilenceTrack()
+    }
+
+    audio.addEventListener('pause', onSilencePaused)
+    audio.addEventListener('ended', onSilencePaused)
+
+    return () => {
+      audio.removeEventListener('pause', onSilencePaused)
+      audio.removeEventListener('ended', onSilencePaused)
+    }
+  }, [resumeSilenceTrack])
+
+  useEffect(() => {
     const onVisibility = () => {
       const ctx = audioCtxRef.current
       if (document.visibilityState === 'visible') {
-        if (ctx?.state === 'suspended') void ctx.resume()
         syncTimerFromClock()
         if (playingRef.current && ctx) {
-          nextBeatTimeRef.current = ctx.currentTime + 0.05
+          nextBeatTimeRef.current = ctx.currentTime + 0.1
         }
-        if (playingRef.current) void requestWakeLock()
+        if (playingRef.current) {
+          void resumeSilenceTrack()
+          void requestWakeLock()
+        }
+      } else if (playingRef.current) {
+        void resumeSilenceTrack()
       }
     }
 
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [requestWakeLock, syncTimerFromClock])
+  }, [requestWakeLock, resumeSilenceTrack, syncTimerFromClock])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    try {
+      navigator.mediaSession.setActionHandler('play', () => {
+        void resumeSilenceTrack()
+      })
+      navigator.mediaSession.setActionHandler('pause', () => {
+        setPlaying(false)
+      })
+    } catch {
+      /* unsupported */
+    }
+    return () => {
+      try {
+        navigator.mediaSession.setActionHandler('play', null)
+        navigator.mediaSession.setActionHandler('pause', null)
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [resumeSilenceTrack])
 
   const selectPreset = (min: number) => {
     const sec = minToSec(min)
@@ -466,13 +533,21 @@ function App() {
 
   const adjust = (delta: number) => setBpm((b) => clampBpm(b + delta))
   const toggle = () => {
+    if (playing) {
+      setPlaying(false)
+      return
+    }
+
     const ctx = ensureCtx()
-    void ctx.resume()
-    if (!playing && timerEnabled) {
+    if (timerEnabled) {
       setRemainingSec(timerSec)
       timerEndsAtRef.current = null
     }
-    setPlaying((p) => !p)
+
+    void (async () => {
+      await startKeepAlive(ctx)
+      setPlaying(true)
+    })()
   }
 
   const pulseDuration = Math.max(80, Math.min(220, 60000 / bpm / 2))
@@ -486,8 +561,19 @@ function App() {
         : 'bg-cream-soft border-cedar/20 text-cedar hover:bg-rose-soft'
     }`
 
+  const silentSrc = getSilentAudioUrl()
+
   return (
     <div className="h-dvh overflow-hidden flex flex-col items-center px-5 text-cedar pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <audio
+        ref={silenceAudioRef}
+        src={silentSrc}
+        loop
+        playsInline
+        preload="auto"
+        className="pointer-events-none fixed h-px w-px opacity-0"
+        aria-hidden
+      />
       <header className="shrink-0 text-center">
         <h1 className="font-serif text-6xl font-bold tracking-tight text-cedar">
           tap-tap
