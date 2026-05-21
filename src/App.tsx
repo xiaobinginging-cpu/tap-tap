@@ -63,12 +63,23 @@ function App() {
   const [sound, setSound] = useState<SoundType>('bright')
 
   const audioCtxRef = useRef<AudioContext | null>(null)
-  const timeoutRef = useRef<number | null>(null)
+  const schedulerRef = useRef<number | null>(null)
   const countdownRef = useRef<number | null>(null)
+  const keepAliveRef = useRef<AudioBufferSourceNode | null>(null)
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+  const nextBeatTimeRef = useRef(0)
+  const timerEndsAtRef = useRef<number | null>(null)
   const bpmRef = useRef<number>(bpm)
   const soundRef = useRef<SoundType>(sound)
+  const playingRef = useRef(playing)
+  const timerEnabledRef = useRef(timerEnabled)
   bpmRef.current = bpm
   soundRef.current = sound
+  playingRef.current = playing
+  timerEnabledRef.current = timerEnabled
+
+  const SCHEDULE_AHEAD_SEC = 0.15
+  const LOOKAHEAD_MS = 25
 
   const ensureCtx = useCallback((): AudioContext => {
     if (!audioCtxRef.current) {
@@ -225,70 +236,172 @@ function App() {
     noise.stop(now + 0.04)
   }, [])
 
+  const playSoundAt = useCallback(
+    (ctx: AudioContext, when: number) => {
+      switch (soundRef.current) {
+        case 'wood':
+          playWood(ctx, when)
+          break
+        case 'digital':
+          playDigital(ctx, when)
+          break
+        case 'deep':
+          playDeep(ctx, when)
+          break
+        case 'bell':
+          playBell(ctx, when)
+          break
+        case 'drum':
+          playDrum(ctx, when)
+          break
+        default:
+          playBright(ctx, when)
+      }
+    },
+    [playBright, playWood, playDigital, playDeep, playBell, playDrum],
+  )
+
   const playClick = useCallback(() => {
     const ctx = ensureCtx()
-    const now = ctx.currentTime
-    switch (soundRef.current) {
-      case 'wood':
-        playWood(ctx, now)
-        break
-      case 'digital':
-        playDigital(ctx, now)
-        break
-      case 'deep':
-        playDeep(ctx, now)
-        break
-      case 'bell':
-        playBell(ctx, now)
-        break
-      case 'drum':
-        playDrum(ctx, now)
-        break
-      default:
-        playBright(ctx, now)
+    playSoundAt(ctx, ctx.currentTime)
+  }, [ensureCtx, playSoundAt])
+
+  const stopKeepAlive = useCallback(() => {
+    keepAliveRef.current?.stop()
+    keepAliveRef.current = null
+  }, [])
+
+  const startKeepAlive = useCallback(
+    (ctx: AudioContext) => {
+      stopKeepAlive()
+      const buffer = ctx.createBuffer(1, 2, ctx.sampleRate)
+      const src = ctx.createBufferSource()
+      src.buffer = buffer
+      src.loop = true
+      const gain = ctx.createGain()
+      gain.gain.value = 0.0001
+      src.connect(gain).connect(ctx.destination)
+      src.start()
+      keepAliveRef.current = src
+    },
+    [stopKeepAlive],
+  )
+
+  const releaseWakeLock = useCallback(async () => {
+    if (!wakeLockRef.current) return
+    try {
+      await wakeLockRef.current.release()
+    } catch {
+      /* already released */
     }
-  }, [
-    ensureCtx,
-    playBright,
-    playWood,
-    playDigital,
-    playDeep,
-    playBell,
-    playDrum,
-  ])
+    wakeLockRef.current = null
+  }, [])
+
+  const requestWakeLock = useCallback(async () => {
+    if (!('wakeLock' in navigator)) return
+    try {
+      await releaseWakeLock()
+      wakeLockRef.current = await navigator.wakeLock.request('screen')
+    } catch {
+      /* denied or unsupported */
+    }
+  }, [releaseWakeLock])
+
+  const setMediaSessionPlaying = useCallback((active: boolean) => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.playbackState = active ? 'playing' : 'none'
+    if (active) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'tap-tap',
+        artist: '节拍器',
+      })
+    }
+  }, [])
+
+  const syncTimerFromClock = useCallback(() => {
+    if (!timerEnabledRef.current || timerEndsAtRef.current === null) return
+    const left = Math.max(
+      0,
+      Math.ceil((timerEndsAtRef.current - Date.now()) / 1000),
+    )
+    setRemainingSec(left)
+    if (left <= 0) setPlaying(false)
+  }, [])
+
+  const scheduleBeats = useCallback(() => {
+    const ctx = audioCtxRef.current
+    if (!ctx || !playingRef.current) return
+
+    const beatSec = 60 / bpmRef.current
+    while (nextBeatTimeRef.current < ctx.currentTime + SCHEDULE_AHEAD_SEC) {
+      const when = nextBeatTimeRef.current
+      playSoundAt(ctx, when)
+
+      const delayMs = (when - ctx.currentTime) * 1000
+      if (delayMs >= 0 && delayMs < 800) {
+        window.setTimeout(() => {
+          if (playingRef.current) setTick((t) => t + 1)
+        }, delayMs)
+      }
+
+      nextBeatTimeRef.current += beatSec
+    }
+  }, [playSoundAt])
+
+  const stopTransport = useCallback(() => {
+    if (schedulerRef.current !== null) {
+      window.clearTimeout(schedulerRef.current)
+      schedulerRef.current = null
+    }
+    stopKeepAlive()
+    void releaseWakeLock()
+    setMediaSessionPlaying(false)
+  }, [releaseWakeLock, setMediaSessionPlaying, stopKeepAlive])
 
   useEffect(() => {
     if (!playing) {
-      if (timeoutRef.current !== null) {
-        window.clearTimeout(timeoutRef.current)
-        timeoutRef.current = null
-      }
+      stopTransport()
       return
     }
 
     let cancelled = false
 
-    const fire = () => {
-      if (cancelled) return
-      playClick()
-      setTick((t) => t + 1)
-      const interval = 60000 / bpmRef.current
-      timeoutRef.current = window.setTimeout(fire, interval)
+    const start = async () => {
+      const ctx = ensureCtx()
+      await ctx.resume()
+      startKeepAlive(ctx)
+      await requestWakeLock()
+      setMediaSessionPlaying(true)
+
+      nextBeatTimeRef.current = ctx.currentTime + 0.05
+
+      const loop = () => {
+        if (cancelled || !playingRef.current) return
+        scheduleBeats()
+        schedulerRef.current = window.setTimeout(loop, LOOKAHEAD_MS)
+      }
+      loop()
     }
 
-    fire()
+    void start()
 
     return () => {
       cancelled = true
-      if (timeoutRef.current !== null) {
-        window.clearTimeout(timeoutRef.current)
-        timeoutRef.current = null
-      }
+      stopTransport()
     }
-  }, [playing, playClick])
+  }, [
+    playing,
+    ensureCtx,
+    scheduleBeats,
+    startKeepAlive,
+    requestWakeLock,
+    setMediaSessionPlaying,
+    stopTransport,
+  ])
 
   useEffect(() => {
     if (!playing || !timerEnabled) {
+      timerEndsAtRef.current = null
       if (countdownRef.current !== null) {
         window.clearInterval(countdownRef.current)
         countdownRef.current = null
@@ -296,17 +409,10 @@ function App() {
       return
     }
 
-    setRemainingSec(timerSec)
+    timerEndsAtRef.current = Date.now() + timerSec * 1000
+    syncTimerFromClock()
 
-    countdownRef.current = window.setInterval(() => {
-      setRemainingSec((prev) => {
-        if (prev <= 1) {
-          setPlaying(false)
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
+    countdownRef.current = window.setInterval(syncTimerFromClock, 1000)
 
     return () => {
       if (countdownRef.current !== null) {
@@ -314,7 +420,24 @@ function App() {
         countdownRef.current = null
       }
     }
-  }, [playing, timerEnabled, timerSec])
+  }, [playing, timerEnabled, timerSec, syncTimerFromClock])
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const ctx = audioCtxRef.current
+      if (document.visibilityState === 'visible') {
+        if (ctx?.state === 'suspended') void ctx.resume()
+        syncTimerFromClock()
+        if (playingRef.current && ctx) {
+          nextBeatTimeRef.current = ctx.currentTime + 0.05
+        }
+        if (playingRef.current) void requestWakeLock()
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [requestWakeLock, syncTimerFromClock])
 
   const selectPreset = (min: number) => {
     const sec = minToSec(min)
@@ -343,9 +466,11 @@ function App() {
 
   const adjust = (delta: number) => setBpm((b) => clampBpm(b + delta))
   const toggle = () => {
-    ensureCtx()
+    const ctx = ensureCtx()
+    void ctx.resume()
     if (!playing && timerEnabled) {
       setRemainingSec(timerSec)
+      timerEndsAtRef.current = null
     }
     setPlaying((p) => !p)
   }
