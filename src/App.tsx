@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getSilentAudioUrl } from './lib/silentAudio'
+import { SOUND_OPTIONS, type SoundType, playSound } from './lib/sounds'
+import { renderClickLoop, type ClickLoop } from './lib/clickLoop'
 
 const MIN_BPM = 40
 const MAX_BPM = 240
@@ -10,22 +11,8 @@ const DEFAULT_TIMER_MIN = TIMER_PRESETS_MIN[2]
 const MIN_TIMER_MIN = 1
 const MAX_TIMER_MIN = 180
 
-type SoundType =
-  | 'bright'
-  | 'wood'
-  | 'digital'
-  | 'deep'
-  | 'bell'
-  | 'drum'
-
-const SOUND_OPTIONS: { id: SoundType; label: string }[] = [
-  { id: 'bright', label: '清脆' },
-  { id: 'wood', label: '木鱼' },
-  { id: 'digital', label: '电子' },
-  { id: 'deep', label: '浑厚' },
-  { id: 'bell', label: '铃声' },
-  { id: 'drum', label: '鼓点' },
-]
+/** Wait out slider drags before re-rendering the loop. */
+const RENDER_DEBOUNCE_MS = 140
 
 function clampBpm(bpm: number): number {
   if (Number.isNaN(bpm)) return DEFAULT_BPM
@@ -63,25 +50,30 @@ function App() {
 
   const [sound, setSound] = useState<SoundType>('bright')
 
+  // The metronome plays as a looping WAV through this <audio> element — that
+  // is the only way the beat survives an iOS screen lock.
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  // A live AudioContext, kept solely for instant sound-chip previews.
   const audioCtxRef = useRef<AudioContext | null>(null)
-  const schedulerRef = useRef<number | null>(null)
-  const countdownRef = useRef<number | null>(null)
-  const silenceAudioRef = useRef<HTMLAudioElement | null>(null)
-  const mediaSourceReadyRef = useRef(false)
+  const loopRef = useRef<ClickLoop | null>(null)
+  const renderedOnceRef = useRef(false)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
-  const nextBeatTimeRef = useRef(0)
+  const countdownRef = useRef<number | null>(null)
   const timerEndsAtRef = useRef<number | null>(null)
+
   const bpmRef = useRef<number>(bpm)
   const soundRef = useRef<SoundType>(sound)
   const playingRef = useRef(playing)
   const timerEnabledRef = useRef(timerEnabled)
-  bpmRef.current = bpm
-  soundRef.current = sound
-  playingRef.current = playing
-  timerEnabledRef.current = timerEnabled
 
-  const SCHEDULE_AHEAD_SEC = 0.25
-  const LOOKAHEAD_MS = 25
+  // Mirror the latest state into refs for use inside async callbacks,
+  // event handlers and effects that should not re-subscribe on every change.
+  useEffect(() => {
+    bpmRef.current = bpm
+    soundRef.current = sound
+    playingRef.current = playing
+    timerEnabledRef.current = timerEnabled
+  })
 
   const ensureCtx = useCallback((): AudioContext => {
     if (!audioCtxRef.current) {
@@ -97,215 +89,12 @@ function App() {
     return audioCtxRef.current
   }, [])
 
-  const playBright = useCallback((ctx: AudioContext, now: number) => {
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(880, now)
-    gain.gain.setValueAtTime(0.001, now)
-    gain.gain.exponentialRampToValueAtTime(0.6, now + 0.002)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05)
-    osc.connect(gain).connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.06)
-  }, [])
-
-  const playWood = useCallback((ctx: AudioContext, now: number) => {
-    const dest = ctx.destination
-
-    const body = ctx.createOscillator()
-    const bodyGain = ctx.createGain()
-    body.type = 'sine'
-    body.frequency.setValueAtTime(320, now)
-    bodyGain.gain.setValueAtTime(0.001, now)
-    bodyGain.gain.exponentialRampToValueAtTime(0.55, now + 0.002)
-    bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09)
-    body.connect(bodyGain).connect(dest)
-    body.start(now)
-    body.stop(now + 0.1)
-
-    const knock = ctx.createOscillator()
-    const knockGain = ctx.createGain()
-    knock.type = 'sine'
-    knock.frequency.setValueAtTime(980, now)
-    knock.frequency.exponentialRampToValueAtTime(620, now + 0.018)
-    knockGain.gain.setValueAtTime(0.001, now)
-    knockGain.gain.exponentialRampToValueAtTime(0.35, now + 0.001)
-    knockGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.035)
-    knock.connect(knockGain).connect(dest)
-    knock.start(now)
-    knock.stop(now + 0.04)
-
-    const len = Math.floor(ctx.sampleRate * 0.025)
-    const buffer = ctx.createBuffer(1, len, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    for (let i = 0; i < len; i++) {
-      const t = i / len
-      data[i] = (Math.random() * 2 - 1) * (1 - t) ** 2
-    }
-    const noise = ctx.createBufferSource()
-    noise.buffer = buffer
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.setValueAtTime(1400, now)
-    filter.Q.setValueAtTime(6, now)
-    const noiseGain = ctx.createGain()
-    noiseGain.gain.setValueAtTime(0.25, now)
-    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.02)
-    noise.connect(filter).connect(noiseGain).connect(dest)
-    noise.start(now)
-    noise.stop(now + 0.03)
-  }, [])
-
-  const playDigital = useCallback((ctx: AudioContext, now: number) => {
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'square'
-    osc.frequency.setValueAtTime(1200, now)
-    gain.gain.setValueAtTime(0.001, now)
-    gain.gain.exponentialRampToValueAtTime(0.35, now + 0.001)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03)
-    osc.connect(gain).connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.035)
-  }, [])
-
-  const playDeep = useCallback((ctx: AudioContext, now: number) => {
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(220, now)
-    gain.gain.setValueAtTime(0.001, now)
-    gain.gain.exponentialRampToValueAtTime(0.65, now + 0.004)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1)
-    osc.connect(gain).connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.11)
-  }, [])
-
-  const playBell = useCallback((ctx: AudioContext, now: number) => {
-    const dest = ctx.destination
-    const partials = [
-      { freq: 740, gain: 0.4, decay: 0.35 },
-      { freq: 1480, gain: 0.22, decay: 0.28 },
-      { freq: 2220, gain: 0.1, decay: 0.2 },
-    ]
-    for (const { freq, gain: peak, decay } of partials) {
-      const osc = ctx.createOscillator()
-      const g = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(freq, now)
-      g.gain.setValueAtTime(0.001, now)
-      g.gain.exponentialRampToValueAtTime(peak, now + 0.003)
-      g.gain.exponentialRampToValueAtTime(0.0001, now + decay)
-      osc.connect(g).connect(dest)
-      osc.start(now)
-      osc.stop(now + decay + 0.02)
-    }
-  }, [])
-
-  const playDrum = useCallback((ctx: AudioContext, now: number) => {
-    const dest = ctx.destination
-
-    const kick = ctx.createOscillator()
-    const kickGain = ctx.createGain()
-    kick.type = 'sine'
-    kick.frequency.setValueAtTime(180, now)
-    kick.frequency.exponentialRampToValueAtTime(55, now + 0.06)
-    kickGain.gain.setValueAtTime(0.001, now)
-    kickGain.gain.exponentialRampToValueAtTime(0.7, now + 0.002)
-    kickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14)
-    kick.connect(kickGain).connect(dest)
-    kick.start(now)
-    kick.stop(now + 0.16)
-
-    const len = Math.floor(ctx.sampleRate * 0.04)
-    const buffer = ctx.createBuffer(1, len, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    for (let i = 0; i < len; i++) {
-      data[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 1.5
-    }
-    const noise = ctx.createBufferSource()
-    noise.buffer = buffer
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'highpass'
-    filter.frequency.setValueAtTime(2000, now)
-    const noiseGain = ctx.createGain()
-    noiseGain.gain.setValueAtTime(0.18, now)
-    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.025)
-    noise.connect(filter).connect(noiseGain).connect(dest)
-    noise.start(now)
-    noise.stop(now + 0.04)
-  }, [])
-
-  const playSoundAt = useCallback(
-    (ctx: AudioContext, when: number) => {
-      switch (soundRef.current) {
-        case 'wood':
-          playWood(ctx, when)
-          break
-        case 'digital':
-          playDigital(ctx, when)
-          break
-        case 'deep':
-          playDeep(ctx, when)
-          break
-        case 'bell':
-          playBell(ctx, when)
-          break
-        case 'drum':
-          playDrum(ctx, when)
-          break
-        default:
-          playBright(ctx, when)
-      }
+  const previewSound = useCallback(
+    (id: SoundType) => {
+      const ctx = ensureCtx()
+      playSound(id, ctx, ctx.currentTime)
     },
-    [playBright, playWood, playDigital, playDeep, playBell, playDrum],
-  )
-
-  const playClick = useCallback(() => {
-    const ctx = ensureCtx()
-    playSoundAt(ctx, ctx.currentTime)
-  }, [ensureCtx, playSoundAt])
-
-  const resumeSilenceTrack = useCallback(async () => {
-    const audio = silenceAudioRef.current
-    if (!audio || !playingRef.current) return
-    try {
-      if (audio.paused) await audio.play()
-    } catch {
-      /* ignore */
-    }
-    const ctx = audioCtxRef.current
-    if (ctx?.state === 'suspended') await ctx.resume()
-  }, [])
-
-  const stopKeepAlive = useCallback(() => {
-    const audio = silenceAudioRef.current
-    if (!audio) return
-    audio.pause()
-    audio.currentTime = 0
-  }, [])
-
-  const startKeepAlive = useCallback(
-    async (ctx: AudioContext) => {
-      const audio = silenceAudioRef.current
-      if (!audio) return
-
-      audio.loop = true
-      audio.volume = 0.02
-      audio.muted = false
-
-      if (!mediaSourceReadyRef.current) {
-        const source = ctx.createMediaElementSource(audio)
-        source.connect(ctx.destination)
-        mediaSourceReadyRef.current = true
-      }
-
-      await audio.play()
-      if (ctx.state === 'suspended') await ctx.resume()
-    },
-    [],
+    [ensureCtx],
   )
 
   const releaseWakeLock = useCallback(async () => {
@@ -330,7 +119,7 @@ function App() {
 
   const setMediaSessionPlaying = useCallback((active: boolean) => {
     if (!('mediaSession' in navigator)) return
-    navigator.mediaSession.playbackState = active ? 'playing' : 'none'
+    navigator.mediaSession.playbackState = active ? 'playing' : 'paused'
     if (active) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: 'tap-tap',
@@ -349,80 +138,104 @@ function App() {
     if (left <= 0) setPlaying(false)
   }, [])
 
-  const scheduleBeats = useCallback(() => {
-    const ctx = audioCtxRef.current
-    if (!ctx || !playingRef.current) return
-
-    const beatSec = 60 / bpmRef.current
-    while (nextBeatTimeRef.current < ctx.currentTime + SCHEDULE_AHEAD_SEC) {
-      const when = nextBeatTimeRef.current
-      playSoundAt(ctx, when)
-
-      const delayMs = (when - ctx.currentTime) * 1000
-      if (delayMs >= 0 && delayMs < 800) {
-        window.setTimeout(() => {
-          if (playingRef.current) setTick((t) => t + 1)
-        }, delayMs)
-      }
-
-      nextBeatTimeRef.current += beatSec
-    }
-  }, [playSoundAt])
-
-  const stopTransport = useCallback(() => {
-    if (schedulerRef.current !== null) {
-      window.clearTimeout(schedulerRef.current)
-      schedulerRef.current = null
-    }
-    stopKeepAlive()
-    void releaseWakeLock()
-    setMediaSessionPlaying(false)
-  }, [releaseWakeLock, setMediaSessionPlaying, stopKeepAlive])
-
+  // Re-render the looping WAV whenever tempo or voice changes, debounced so a
+  // slider drag does not thrash. Runs while stopped too, so the <audio>
+  // element always has a current source ready for an instant gesture-start.
   useEffect(() => {
-    if (!playing) {
-      stopTransport()
-      return
-    }
-
     let cancelled = false
 
-    const start = async () => {
-      const ctx = ensureCtx()
-      if (silenceAudioRef.current?.paused) {
-        await startKeepAlive(ctx)
-      } else if (ctx.state === 'suspended') {
-        await ctx.resume()
-      }
-      await requestWakeLock()
-      setMediaSessionPlaying(true)
-
-      nextBeatTimeRef.current = ctx.currentTime + 0.1
-
-      const loop = () => {
-        if (cancelled || !playingRef.current) return
-        scheduleBeats()
-        schedulerRef.current = window.setTimeout(loop, LOOKAHEAD_MS)
-      }
-      loop()
+    const run = () => {
+      void (async () => {
+        let loop: ClickLoop
+        try {
+          loop = await renderClickLoop(soundRef.current, bpmRef.current)
+        } catch {
+          return
+        }
+        if (cancelled) {
+          URL.revokeObjectURL(loop.url)
+          return
+        }
+        const audio = audioRef.current
+        if (!audio) {
+          URL.revokeObjectURL(loop.url)
+          return
+        }
+        const prev = loopRef.current
+        loopRef.current = loop
+        audio.src = loop.url
+        audio.load()
+        if (prev) URL.revokeObjectURL(prev.url)
+        if (playingRef.current) {
+          try {
+            await audio.play()
+          } catch {
+            /* will resume on next gesture */
+          }
+        }
+      })()
     }
 
-    void start()
+    if (!renderedOnceRef.current) {
+      // First render: do it immediately so a quick tap on 开始 has a source.
+      renderedOnceRef.current = true
+      run()
+      return () => {
+        cancelled = true
+      }
+    }
 
+    const handle = window.setTimeout(run, RENDER_DEBOUNCE_MS)
     return () => {
       cancelled = true
-      stopTransport()
+      window.clearTimeout(handle)
     }
-  }, [
-    playing,
-    ensureCtx,
-    scheduleBeats,
-    startKeepAlive,
-    requestWakeLock,
-    setMediaSessionPlaying,
-    stopTransport,
-  ])
+  }, [bpm, sound])
 
+  // Drive playback from the `playing` flag.
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio) return
+
+    if (playing) {
+      audio.play().catch(() => {
+        /* needs a user gesture — toggle() starts it synchronously */
+      })
+      void requestWakeLock()
+      setMediaSessionPlaying(true)
+    } else {
+      audio.pause()
+      audio.currentTime = 0
+      void releaseWakeLock()
+      setMediaSessionPlaying(false)
+    }
+  }, [playing, requestWakeLock, releaseWakeLock, setMediaSessionPlaying])
+
+  // Visual pulse, derived from the audio clock so it stays in sync with the
+  // loop. Foreground only (rAF freezes when backgrounded — fine, screen off).
+  useEffect(() => {
+    if (!playing) return
+    let raf = 0
+    let lastBeat = -1
+
+    const step = () => {
+      const audio = audioRef.current
+      const loop = loopRef.current
+      if (audio && loop && !audio.paused) {
+        const beat = Math.floor(audio.currentTime / loop.beatSec)
+        if (beat !== lastBeat) {
+          lastBeat = beat
+          setTick((t) => t + 1)
+        }
+      }
+      raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [playing])
+
+  // Timer countdown — wall-clock anchored, so it self-corrects after the tab
+  // is backgrounded (where setInterval is throttled or frozen).
   useEffect(() => {
     if (!playing || !timerEnabled) {
       timerEndsAtRef.current = null
@@ -446,53 +259,34 @@ function App() {
     }
   }, [playing, timerEnabled, timerSec, syncTimerFromClock])
 
-  useEffect(() => {
-    const audio = silenceAudioRef.current
-    if (!audio) return
-
-    const onSilencePaused = () => {
-      if (playingRef.current) void resumeSilenceTrack()
-    }
-
-    audio.addEventListener('pause', onSilencePaused)
-    audio.addEventListener('ended', onSilencePaused)
-
-    return () => {
-      audio.removeEventListener('pause', onSilencePaused)
-      audio.removeEventListener('ended', onSilencePaused)
-    }
-  }, [resumeSilenceTrack])
-
+  // Coming back to the foreground: re-sync the timer, recover audio if iOS
+  // paused it, and re-acquire the (auto-released) wake lock.
   useEffect(() => {
     const onVisibility = () => {
-      const ctx = audioCtxRef.current
-      if (document.visibilityState === 'visible') {
-        syncTimerFromClock()
-        if (playingRef.current && ctx) {
-          nextBeatTimeRef.current = ctx.currentTime + 0.1
+      if (document.visibilityState !== 'visible') return
+      syncTimerFromClock()
+      if (playingRef.current) {
+        const audio = audioRef.current
+        if (audio && audio.paused) {
+          audio.play().catch(() => {
+            /* ignore */
+          })
         }
-        if (playingRef.current) {
-          void resumeSilenceTrack()
-          void requestWakeLock()
-        }
-      } else if (playingRef.current) {
-        void resumeSilenceTrack()
+        void requestWakeLock()
       }
     }
 
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [requestWakeLock, resumeSilenceTrack, syncTimerFromClock])
+  }, [requestWakeLock, syncTimerFromClock])
 
+  // Lock-screen / Control Center transport controls.
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     try {
-      navigator.mediaSession.setActionHandler('play', () => {
-        void resumeSilenceTrack()
-      })
-      navigator.mediaSession.setActionHandler('pause', () => {
-        setPlaying(false)
-      })
+      navigator.mediaSession.setActionHandler('play', () => setPlaying(true))
+      navigator.mediaSession.setActionHandler('pause', () => setPlaying(false))
+      navigator.mediaSession.setActionHandler('stop', () => setPlaying(false))
     } catch {
       /* unsupported */
     }
@@ -500,11 +294,19 @@ function App() {
       try {
         navigator.mediaSession.setActionHandler('play', null)
         navigator.mediaSession.setActionHandler('pause', null)
+        navigator.mediaSession.setActionHandler('stop', null)
       } catch {
         /* ignore */
       }
     }
-  }, [resumeSilenceTrack])
+  }, [])
+
+  // Release the last loop's object URL on unmount.
+  useEffect(() => {
+    return () => {
+      if (loopRef.current) URL.revokeObjectURL(loopRef.current.url)
+    }
+  }, [])
 
   const selectPreset = (min: number) => {
     const sec = minToSec(min)
@@ -532,22 +334,25 @@ function App() {
   }
 
   const adjust = (delta: number) => setBpm((b) => clampBpm(b + delta))
+
   const toggle = () => {
     if (playing) {
       setPlaying(false)
       return
     }
 
-    const ctx = ensureCtx()
     if (timerEnabled) {
       setRemainingSec(timerSec)
       timerEndsAtRef.current = null
     }
 
-    void (async () => {
-      await startKeepAlive(ctx)
-      setPlaying(true)
-    })()
+    // Kick playback off inside the user gesture so iOS unlocks the <audio>
+    // element — that unlock is what lets it keep playing once the screen
+    // locks. The render effect has already set a current source.
+    audioRef.current?.play().catch(() => {
+      /* source not ready yet; the render effect will start it */
+    })
+    setPlaying(true)
   }
 
   const pulseDuration = Math.max(80, Math.min(220, 60000 / bpm / 2))
@@ -561,13 +366,10 @@ function App() {
         : 'bg-cream-soft border-cedar/20 text-cedar hover:bg-rose-soft'
     }`
 
-  const silentSrc = getSilentAudioUrl()
-
   return (
     <div className="h-dvh overflow-hidden flex flex-col items-center px-5 text-cedar pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <audio
-        ref={silenceAudioRef}
-        src={silentSrc}
+        ref={audioRef}
         loop
         playsInline
         preload="auto"
@@ -729,9 +531,7 @@ function App() {
                     type="button"
                     onClick={() => {
                       setSound(id)
-                      ensureCtx()
-                      soundRef.current = id
-                      playClick()
+                      previewSound(id)
                     }}
                     className={chipClass(sound === id, true, true)}
                     aria-pressed={sound === id}
