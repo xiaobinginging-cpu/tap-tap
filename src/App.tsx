@@ -362,7 +362,7 @@ function App() {
       compact ? 'px-1.5 py-2 text-xs leading-tight' : 'px-3 py-2 text-sm'
     } ${
       active
-        ? 'bg-rose text-cream-soft border-rose shadow-[0_2px_0_rgba(107,79,59,0.2)]'
+        ? 'bg-rose text-cream-soft border-rose shadow-[0_2px_0_rgba(44,74,110,0.2)]'
         : 'bg-cream-soft border-cedar/20 text-cedar hover:bg-rose-soft'
     }`
 
@@ -393,7 +393,7 @@ function App() {
                   : 'none',
               }}
             />
-            <div className="relative flex flex-col items-center justify-center rounded-full bg-cream-soft h-44 w-44 shadow-[0_2px_0_rgba(107,79,59,0.15)] border border-rose/40">
+            <div className="relative flex flex-col items-center justify-center rounded-full bg-cream-soft h-44 w-44 shadow-[0_2px_0_rgba(44,74,110,0.15)] border border-rose/40">
               <div className="font-serif text-6xl font-bold leading-none text-cedar tabular-nums">
                 {bpm}
               </div>
@@ -446,7 +446,7 @@ function App() {
                 step={1}
                 value={bpm}
                 onChange={(e) => setBpm(clampBpm(Number(e.target.value)))}
-                className="w-full h-1.5 accent-[#d4a89b]"
+                className="w-full h-1.5 accent-[#5b9bd5]"
                 aria-label="BPM 滑块"
               />
           <div className="flex justify-between text-xs text-cedar-soft mt-0.5 tabular-nums">
@@ -545,7 +545,7 @@ function App() {
         <button
           type="button"
           onClick={toggle}
-          className="shrink-0 w-full max-w-xs px-10 py-4 rounded-full bg-rose text-cream-soft text-xl font-serif font-semibold tracking-wide shadow-[0_3px_0_rgba(107,79,59,0.25)] hover:bg-rose-soft hover:text-cedar transition-colors active:translate-y-[1px]"
+          className="shrink-0 w-full max-w-xs px-10 py-4 rounded-full bg-rose text-cream-soft text-xl font-serif font-semibold tracking-wide shadow-[0_3px_0_rgba(44,74,110,0.25)] hover:bg-rose-soft hover:text-cedar transition-colors active:translate-y-[1px]"
           aria-pressed={playing}
         >
           {playing ? '暂停' : '开始'}

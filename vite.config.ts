@@ -20,8 +20,8 @@ export default defineConfig({
         name: 'tap-tap',
         short_name: 'tap-tap',
         description: '家里跟练用的节拍器',
-        theme_color: '#f5ecd9',
-        background_color: '#f5ecd9',
+        theme_color: '#eef3f8',
+        background_color: '#eef3f8',
         display: 'standalone',
         icons: [
           {

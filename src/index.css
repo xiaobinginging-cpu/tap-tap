@@ -1,12 +1,12 @@
 @import "tailwindcss";
 
 @theme {
-  --color-cream: #f5ecd9;
-  --color-cream-soft: #fbf4e3;
-  --color-cedar: #6b4f3b;
-  --color-cedar-soft: #8a6e58;
-  --color-rose: #d4a89b;
-  --color-rose-soft: #e8c7bc;
+  --color-cream: #eef3f8;
+  --color-cream-soft: #f5f8fc;
+  --color-cedar: #2c4a6e;
+  --color-cedar-soft: #5a7a9a;
+  --color-rose: #5b9bd5;
+  --color-rose-soft: #a8cce8;
 
   --font-serif: "Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", ui-serif, Georgia, serif;
 }
