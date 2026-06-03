@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="tap-tap">
-  <rect width="512" height="512" fill="#f5ecd9"/>
-  <circle cx="256" cy="256" r="198" fill="#e8c7bc"/>
-  <circle cx="256" cy="256" r="170" fill="#fbf4e3" stroke="#d4a89b" stroke-width="7"/>
+  <rect width="512" height="512" rx="96" fill="#eef3f8"/>
+  <circle cx="256" cy="256" r="198" fill="#a8cce8"/>
+  <circle cx="256" cy="256" r="170" fill="#f5f8fc" stroke="#5b9bd5" stroke-width="7"/>
   <text
     x="256"
     y="268"
@@ -9,6 +9,6 @@
     font-family="Georgia, 'Songti SC', 'STSong', serif"
     font-size="58"
     font-weight="700"
-    fill="#6b4f3b"
+    fill="#2c4a6e"
   >tap-tap</text>
 </svg>
