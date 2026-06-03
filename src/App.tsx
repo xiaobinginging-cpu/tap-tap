@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { SOUND_OPTIONS, type SoundType, playSound } from './lib/sounds'
 import { renderClickLoop, type ClickLoop } from './lib/clickLoop'
+import { Router, Route, Switch } from 'wouter'
+import { useHashLocation } from 'wouter/use-hash-location'
+import { usePracticeLog } from './lib/usePracticeLog'
+import CalendarPage from './pages/CalendarPage'
 
 const MIN_BPM = 40
 const MAX_BPM = 240
@@ -68,6 +72,7 @@ function App() {
   const soundRef = useRef<SoundType>(sound)
   const playingRef = useRef(playing)
   const timerEnabledRef = useRef(timerEnabled)
+  const { dates, checkIn } = usePracticeLog()
 
   // Mirror the latest state into refs for use inside async callbacks,
   // event handlers and effects that should not re-subscribe on every change.
@@ -401,6 +406,7 @@ function App() {
     audioRef.current?.play().catch(() => {
       /* source not ready yet; the render effect will start it */
     })
+    checkIn()
     setPlaying(true)
   }
 
@@ -416,7 +422,13 @@ function App() {
     }`
 
   return (
-    <div className="h-dvh overflow-hidden flex flex-col items-center px-5 text-cedar pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <Router hook={useHashLocation}>
+      <Switch>
+        <Route path="/calendar">
+          <CalendarPage dates={dates} onBack={() => (location.hash = '#/')} />
+        </Route>
+        <Route>
+          <div className="h-dvh overflow-hidden flex flex-col items-center px-5 text-cedar pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <audio
         ref={audioRef}
         loop
@@ -425,10 +437,19 @@ function App() {
         className="pointer-events-none fixed h-px w-px opacity-0"
         aria-hidden
       />
-      <header className="shrink-0 text-center">
+      <header className="shrink-0 w-full max-w-md flex items-center justify-between pt-2">
+        <div className="w-10" />
         <h1 className="font-serif text-6xl font-bold tracking-tight text-cedar">
           tap-tap
         </h1>
+        <button
+          type="button"
+          onClick={() => (location.hash = '#/calendar')}
+          className="w-10 h-10 flex items-center justify-center text-xl text-cedar-soft hover:text-cedar transition-colors"
+          aria-label="练习日历"
+        >
+          📅
+        </button>
       </header>
 
       <main className="flex-1 min-h-0 w-full max-w-md flex flex-col items-center justify-evenly">
@@ -600,7 +621,10 @@ function App() {
           {playing ? '暂停' : '开始'}
         </button>
       </main>
-    </div>
+          </div>
+        </Route>
+      </Switch>
+    </Router>
   )
 }
 
