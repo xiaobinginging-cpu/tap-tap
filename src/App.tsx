@@ -55,6 +55,9 @@ function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   // A live AudioContext, kept solely for instant sound-chip previews.
   const audioCtxRef = useRef<AudioContext | null>(null)
+  // Web Audio source for gapless looping in the foreground.
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null)
+  const waStartTimeRef = useRef(0)
   const loopRef = useRef<ClickLoop | null>(null)
   const renderedOnceRef = useRef(false)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
@@ -96,6 +99,28 @@ function App() {
     },
     [ensureCtx],
   )
+
+  const stopWebAudioLoop = useCallback(() => {
+    if (sourceRef.current) {
+      try { sourceRef.current.stop() } catch { /* already stopped */ }
+      try { sourceRef.current.disconnect() } catch { /* ok */ }
+      sourceRef.current = null
+    }
+  }, [])
+
+  const startWebAudioLoop = useCallback(() => {
+    const ctx = ensureCtx()
+    const loop = loopRef.current
+    if (!loop) return
+    stopWebAudioLoop()
+    const source = ctx.createBufferSource()
+    source.buffer = loop.buffer
+    source.loop = true
+    source.connect(ctx.destination)
+    source.start()
+    sourceRef.current = source
+    waStartTimeRef.current = ctx.currentTime
+  }, [ensureCtx, stopWebAudioLoop])
 
   const releaseWakeLock = useCallback(async () => {
     if (!wakeLockRef.current) return
@@ -167,10 +192,14 @@ function App() {
         audio.load()
         if (prev) URL.revokeObjectURL(prev.url)
         if (playingRef.current) {
-          try {
-            await audio.play()
-          } catch {
-            /* will resume on next gesture */
+          if (document.visibilityState === 'visible') {
+            startWebAudioLoop()
+          } else {
+            try {
+              await audio.play()
+            } catch {
+              /* will resume on next gesture */
+            }
           }
         }
       })()
@@ -190,7 +219,7 @@ function App() {
       cancelled = true
       window.clearTimeout(handle)
     }
-  }, [bpm, sound])
+  }, [bpm, sound, startWebAudioLoop])
 
   // Drive playback from the `playing` flag.
   useEffect(() => {
@@ -198,18 +227,24 @@ function App() {
     if (!audio) return
 
     if (playing) {
-      audio.play().catch(() => {
-        /* needs a user gesture — toggle() starts it synchronously */
-      })
+      if (document.visibilityState === 'visible') {
+        audio.pause()
+        startWebAudioLoop()
+      } else {
+        audio.play().catch(() => {
+          /* needs a user gesture — toggle() starts it synchronously */
+        })
+      }
       void requestWakeLock()
       setMediaSessionPlaying(true)
     } else {
+      stopWebAudioLoop()
       audio.pause()
       audio.currentTime = 0
       void releaseWakeLock()
       setMediaSessionPlaying(false)
     }
-  }, [playing, requestWakeLock, releaseWakeLock, setMediaSessionPlaying])
+  }, [playing, requestWakeLock, releaseWakeLock, setMediaSessionPlaying, startWebAudioLoop, stopWebAudioLoop])
 
   // Visual pulse, derived from the audio clock so it stays in sync with the
   // loop. Foreground only (rAF freezes when backgrounded — fine, screen off).
@@ -219,14 +254,24 @@ function App() {
     let lastBeat = -1
 
     const step = () => {
-      const audio = audioRef.current
       const loop = loopRef.current
-      if (audio && loop && !audio.paused) {
-        const beat = Math.floor(audio.currentTime / loop.beatSec)
-        if (beat !== lastBeat) {
-          lastBeat = beat
-          setTick((t) => t + 1)
+      if (!loop) { raf = requestAnimationFrame(step); return }
+
+      let beat: number | undefined
+      if (sourceRef.current && audioCtxRef.current) {
+        // Web Audio mode: use AudioContext time for sample-accurate sync
+        const elapsed = audioCtxRef.current.currentTime - waStartTimeRef.current
+        beat = Math.floor(elapsed / loop.beatSec)
+      } else {
+        // <audio> element mode (background / not yet started)
+        const audio = audioRef.current
+        if (audio && !audio.paused) {
+          beat = Math.floor(audio.currentTime / loop.beatSec)
         }
+      }
+      if (beat !== undefined && beat !== lastBeat) {
+        lastBeat = beat
+        setTick((t) => t + 1)
       }
       raf = requestAnimationFrame(step)
     }
@@ -263,22 +308,24 @@ function App() {
   // paused it, and re-acquire the (auto-released) wake lock.
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState !== 'visible') return
       syncTimerFromClock()
-      if (playingRef.current) {
-        const audio = audioRef.current
-        if (audio && audio.paused) {
-          audio.play().catch(() => {
-            /* ignore */
-          })
-        }
+      if (!playingRef.current) return
+
+      if (document.visibilityState === 'visible') {
+        // Foreground: switch to Web Audio for gapless playback
+        audioRef.current?.pause()
+        startWebAudioLoop()
         void requestWakeLock()
+      } else {
+        // Background: switch to <audio> for iOS background playback
+        stopWebAudioLoop()
+        audioRef.current?.play().catch(() => { /* ignore */ })
       }
     }
 
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [requestWakeLock, syncTimerFromClock])
+  }, [requestWakeLock, syncTimerFromClock, startWebAudioLoop, stopWebAudioLoop])
 
   // Lock-screen / Control Center transport controls.
   useEffect(() => {
@@ -304,9 +351,10 @@ function App() {
   // Release the last loop's object URL on unmount.
   useEffect(() => {
     return () => {
+      stopWebAudioLoop()
       if (loopRef.current) URL.revokeObjectURL(loopRef.current.url)
     }
-  }, [])
+  }, [stopWebAudioLoop])
 
   const selectPreset = (min: number) => {
     const sec = minToSec(min)
@@ -346,9 +394,10 @@ function App() {
       timerEndsAtRef.current = null
     }
 
-    // Kick playback off inside the user gesture so iOS unlocks the <audio>
-    // element — that unlock is what lets it keep playing once the screen
-    // locks. The render effect has already set a current source.
+    // Unlock both audio paths inside the user gesture:
+    // - AudioContext for gapless Web Audio playback (foreground)
+    // - <audio> element for iOS background playback (screen locked)
+    ensureCtx()
     audioRef.current?.play().catch(() => {
       /* source not ready yet; the render effect will start it */
     })

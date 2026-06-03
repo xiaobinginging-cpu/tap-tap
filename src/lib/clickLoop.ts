@@ -12,6 +12,8 @@ const TARGET_LOOP_SEC = 2
 export interface ClickLoop {
   /** Object URL of the looping WAV — assign to <audio>.src. */
   url: string
+  /** AudioBuffer with tails folded — for Web Audio gapless looping. */
+  buffer: AudioBuffer
   /** Exact seconds per beat in the rendered loop (for visual sync). */
   beatSec: number
   /** Number of beats contained in one loop. */
@@ -59,8 +61,16 @@ export async function renderClickLoop(
     loop[i] += src[loopSamples + i]
   }
 
+  const audioBuffer = new AudioBuffer({
+    length: loopSamples,
+    sampleRate: SAMPLE_RATE,
+    numberOfChannels: 1,
+  })
+  audioBuffer.copyToChannel(loop, 0)
+
   return {
     url: URL.createObjectURL(encodeWav(loop, SAMPLE_RATE)),
+    buffer: audioBuffer,
     beatSec: exactBeatSec,
     beats,
   }
