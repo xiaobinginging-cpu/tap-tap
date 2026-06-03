@@ -72,7 +72,7 @@ function App() {
   const soundRef = useRef<SoundType>(sound)
   const playingRef = useRef(playing)
   const timerEnabledRef = useRef(timerEnabled)
-  const { dates, checkIn } = usePracticeLog()
+  const { dates, checkIn, checkedInToday } = usePracticeLog()
 
   // Mirror the latest state into refs for use inside async callbacks,
   // event handlers and effects that should not re-subscribe on every change.
@@ -425,7 +425,7 @@ function App() {
     <Router hook={useHashLocation}>
       <Switch>
         <Route path="/calendar">
-          <CalendarPage dates={dates} onBack={() => (location.hash = '#/')} />
+          <CalendarPage dates={dates} checkIn={checkIn} checkedInToday={checkedInToday} onBack={() => (location.hash = '#/')} />
         </Route>
         <Route>
           <div className="h-dvh overflow-hidden flex flex-col items-center px-5 text-cedar pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
@@ -445,10 +445,16 @@ function App() {
         <button
           type="button"
           onClick={() => (location.hash = '#/calendar')}
-          className="w-10 h-10 flex items-center justify-center text-xl text-cedar-soft hover:text-cedar transition-colors"
+          className="w-10 h-10 flex items-center justify-center text-cedar-soft hover:text-cedar transition-colors"
           aria-label="练习日历"
         >
-          📅
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="3" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <circle cx="12" cy="15.5" r="1.5" fill="currentColor" stroke="none" />
+          </svg>
         </button>
       </header>
 

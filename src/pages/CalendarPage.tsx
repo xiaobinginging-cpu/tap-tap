@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 
 interface Props {
   dates: Set<string>
+  checkIn: () => void
+  checkedInToday: boolean
   onBack: () => void
 }
 
@@ -20,7 +22,7 @@ function dateKey(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
-export default function CalendarPage({ dates, onBack }: Props) {
+export default function CalendarPage({ dates, checkIn, checkedInToday, onBack }: Props) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
@@ -87,6 +89,20 @@ export default function CalendarPage({ dates, onBack }: Props) {
           <div className="text-xs text-cedar-soft">本月打卡</div>
         </div>
       </div>
+
+      {/* Manual check-in */}
+      <button
+        type="button"
+        onClick={checkIn}
+        disabled={checkedInToday}
+        className={`w-full max-w-md py-3 rounded-full text-base font-serif font-semibold tracking-wide transition-colors ${
+          checkedInToday
+            ? 'bg-cream-soft border border-cedar/10 text-cedar-soft cursor-default'
+            : 'bg-rose text-cream-soft shadow-[0_3px_0_rgba(44,74,110,0.25)] hover:bg-rose-soft hover:text-cedar active:translate-y-[1px]'
+        }`}
+      >
+        {checkedInToday ? '✓ 今日已打卡' : '打卡'}
+      </button>
 
       {/* Month navigation */}
       <div className="w-full max-w-md flex items-center justify-between mb-2">
