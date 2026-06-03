@@ -32,11 +32,15 @@ export function usePracticeLog() {
 
   /** Record a practice session for today. */
   const checkIn = useCallback(() => {
+    toggleDate(todayKey())
+  }, [])
+
+  /** Toggle check-in for an arbitrary date (YYYY-MM-DD). */
+  const toggleDate = useCallback((key: string) => {
     setDates((prev) => {
-      const key = todayKey()
-      if (prev.has(key)) return prev
       const next = new Set(prev)
-      next.add(key)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }, [])
@@ -44,5 +48,5 @@ export function usePracticeLog() {
   /** Whether today has been checked in. */
   const checkedInToday = dates.has(todayKey())
 
-  return { dates, checkIn, checkedInToday }
+  return { dates, checkIn, toggleDate, checkedInToday }
 }

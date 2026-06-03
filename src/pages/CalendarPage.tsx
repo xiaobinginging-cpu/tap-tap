@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 interface Props {
   dates: Set<string>
   checkIn: () => void
+  toggleDate: (key: string) => void
   checkedInToday: boolean
   onBack: () => void
 }
@@ -22,7 +23,7 @@ function dateKey(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
-export default function CalendarPage({ dates, checkIn, checkedInToday, onBack }: Props) {
+export default function CalendarPage({ dates, checkIn, toggleDate, checkedInToday, onBack }: Props) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
@@ -146,17 +147,19 @@ export default function CalendarPage({ dates, checkIn, checkedInToday, onBack }:
             const checked = dates.has(key)
             const isToday = key === nowKey
             return (
-              <div
+              <button
                 key={key}
+                type="button"
+                onClick={() => toggleDate(key)}
                 className={`
-                  relative flex items-center justify-center h-9 rounded-full text-sm
-                  ${checked ? 'bg-rose text-cream-soft font-semibold' : ''}
+                  relative flex items-center justify-center h-9 rounded-full text-sm transition-colors
+                  ${checked ? 'bg-rose text-cream-soft font-semibold' : 'hover:bg-rose-soft/50'}
                   ${isToday && !checked ? 'ring-2 ring-rose/40 font-semibold text-cedar' : ''}
                   ${!checked && !isToday ? 'text-cedar-soft' : ''}
                 `}
               >
                 {day}
-              </div>
+              </button>
             )
           })}
         </div>

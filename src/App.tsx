@@ -72,7 +72,7 @@ function App() {
   const soundRef = useRef<SoundType>(sound)
   const playingRef = useRef(playing)
   const timerEnabledRef = useRef(timerEnabled)
-  const { dates, checkIn, checkedInToday } = usePracticeLog()
+  const { dates, checkIn, toggleDate, checkedInToday } = usePracticeLog()
 
   // Mirror the latest state into refs for use inside async callbacks,
   // event handlers and effects that should not re-subscribe on every change.
@@ -425,7 +425,7 @@ function App() {
     <Router hook={useHashLocation}>
       <Switch>
         <Route path="/calendar">
-          <CalendarPage dates={dates} checkIn={checkIn} checkedInToday={checkedInToday} onBack={() => (location.hash = '#/')} />
+          <CalendarPage dates={dates} checkIn={checkIn} toggleDate={toggleDate} checkedInToday={checkedInToday} onBack={() => (location.hash = '#/')} />
         </Route>
         <Route>
           <div className="h-dvh overflow-hidden flex flex-col items-center px-5 text-cedar pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
